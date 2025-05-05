@@ -61,3 +61,7 @@ cd tradesim
 
 # Step 2: Run all services
 docker-compose up --build
+
+# Step 3: Run the Front End with the help of React and Vite
+cd tradesimFronrEnd
+npm run dev
