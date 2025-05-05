@@ -47,7 +47,7 @@
 
 ## 🖼️ Screenshots & Demo
 
-  > ![Screenshot Placeholder]([https://drive.google.com/drive/folders/1TiRF66rLAcRtF7g-Q4PAJS4K-YlIP0j7?usp=drive_link])
+> 📂 [View Screenshots & Demo Folder](https://drive.google.com/drive/folders/1TiRF66rLAcRtF7g-Q4PAJS4K-YlIP0j7?usp=drive_link)
 
 ---
 
