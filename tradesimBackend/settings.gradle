@@ -1,0 +1,6 @@
+rootProject.name = 'tradesim'
+
+include 'auth-service'
+include 'market-service'
+include 'portfolio-service'
+include 'trade-service'

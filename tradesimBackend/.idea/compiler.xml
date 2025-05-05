@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CompilerConfiguration">
+    <annotationProcessing>
+      <profile default="true" name="Default" enabled="true" />
+      <profile name="Gradle Imported" enabled="true">
+        <outputRelativeToContentRoot value="true" />
+        <processorPath useClasspath="false">
+          <entry name="$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.projectlombok/lombok/1.18.32/17d46b3e205515e1e8efd3ee4d57ce8018914163/lombok-1.18.32.jar" />
+        </processorPath>
+        <module name="tradesim.portfolio-service.main" />
+        <module name="tradesim.auth-service.main" />
+        <module name="tradesim.market-service.main" />
+      </profile>
+      <profile name="Gradle Imported" enabled="true">
+        <outputRelativeToContentRoot value="true" />
+        <processorPath useClasspath="false">
+          <entry name="$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.projectlombok/lombok/1.18.30/f195ee86e6c896ea47a1d39defbe20eb59cd149d/lombok-1.18.30.jar" />
+        </processorPath>
+        <module name="tradesim.trade-service.main" />
+      </profile>
+    </annotationProcessing>
+    <bytecodeTargetLevel>
+      <module name="tradesim.auth-service" target="17" />
+      <module name="tradesim.auth-service.main" target="17" />
+      <module name="tradesim.auth-service.test" target="17" />
+      <module name="tradesim.market-service" target="17" />
+      <module name="tradesim.market-service.main" target="17" />
+      <module name="tradesim.market-service.test" target="17" />
+      <module name="tradesim.portfolio-service" target="17" />
+      <module name="tradesim.portfolio-service.main" target="17" />
+      <module name="tradesim.portfolio-service.test" target="17" />
+      <module name="tradesim.trade-service" target="17" />
+      <module name="tradesim.trade-service.main" target="17" />
+      <module name="tradesim.trade-service.test" target="17" />
+    </bytecodeTargetLevel>
+  </component>
+</project>

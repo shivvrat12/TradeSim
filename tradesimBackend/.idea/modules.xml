@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/tradesim.iml" filepath="$PROJECT_DIR$/.idea/modules/tradesim.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/auth-service/tradesim.auth-service.iml" filepath="$PROJECT_DIR$/.idea/modules/auth-service/tradesim.auth-service.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/auth-service/tradesim.auth-service.main.iml" filepath="$PROJECT_DIR$/.idea/modules/auth-service/tradesim.auth-service.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/auth-service/tradesim.auth-service.test.iml" filepath="$PROJECT_DIR$/.idea/modules/auth-service/tradesim.auth-service.test.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/market-service/tradesim.market-service.iml" filepath="$PROJECT_DIR$/.idea/modules/market-service/tradesim.market-service.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/market-service/tradesim.market-service.main.iml" filepath="$PROJECT_DIR$/.idea/modules/market-service/tradesim.market-service.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/market-service/tradesim.market-service.test.iml" filepath="$PROJECT_DIR$/.idea/modules/market-service/tradesim.market-service.test.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/portfolio-service/tradesim.portfolio-service.iml" filepath="$PROJECT_DIR$/.idea/modules/portfolio-service/tradesim.portfolio-service.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/portfolio-service/tradesim.portfolio-service.main.iml" filepath="$PROJECT_DIR$/.idea/modules/portfolio-service/tradesim.portfolio-service.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/portfolio-service/tradesim.portfolio-service.test.iml" filepath="$PROJECT_DIR$/.idea/modules/portfolio-service/tradesim.portfolio-service.test.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/trade-service/tradesim.trade-service.iml" filepath="$PROJECT_DIR$/.idea/modules/trade-service/tradesim.trade-service.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/trade-service/tradesim.trade-service.main.iml" filepath="$PROJECT_DIR$/.idea/modules/trade-service/tradesim.trade-service.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/trade-service/tradesim.trade-service.test.iml" filepath="$PROJECT_DIR$/.idea/modules/trade-service/tradesim.trade-service.test.iml" />
+    </modules>
+  </component>
+</project>
