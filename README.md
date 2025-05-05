@@ -65,3 +65,44 @@ docker-compose up --build
 # Step 3: Run the Front End with the help of React and Vite
 cd tradesimFronrEnd
 npm run dev
+
+
+🐳 Ensure Docker and Docker Compose are installed before running.
+
+🔐 Authentication Flow
+User signs up → auth-service generates a JWT.
+
+JWT is included in all protected API requests.
+
+Other services decode the token for user identity.
+
+🔄 Event-Driven Flow
+When a user places a trade:
+
+trade-service sends a Kafka event.
+
+portfolio-service consumes and updates user’s holdings and balance.
+
+🌐 CORS Setup
+CORS is configured to allow requests from:
+
+http://localhost:3000 (Dev)
+
+Your production domain (e.g., https://tradesim.xyz)
+
+📌 Project Status
+✅ Local deployment with Docker Compose
+✅ Fully functional paper trading backend
+🔄 Real-time market updates with Binance WebSocket
+🚧 Hosting/Deployment skipped for cost-efficiency (demo via video/screenshots)
+
+🙌 Contributing
+Pull requests are welcome. For major changes, open an issue first to discuss.
+
+📜 License
+This project is open source under the MIT License.
+
+✨ Created By
+Shiv Vrat Raghuvanshi
+🎓 BCA Final Year | Java, Spring Boot & React Enthusiast
+📫 LinkedIn • GitHub
