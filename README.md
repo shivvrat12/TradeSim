@@ -52,20 +52,7 @@
 
 ---
 
-## 🚀 How to Run Locally
-
-```bash
-# Step 1: Clone the project
-git clone https://github.com/yourusername/tradesim.git
-cd tradesim
-
-# Step 2: Run all services
-docker-compose up --build
-
-# Step 3: Run the Front End with the help of React and Vite
-cd tradesimFronrEnd
-npm run dev
-
+## More About this project
 
 🐳 Ensure Docker and Docker Compose are installed before running.
 
@@ -106,3 +93,22 @@ This project is open source under the MIT License.
 Shiv Vrat Raghuvanshi
 🎓 BCA Final Year | Java, Spring Boot & React Enthusiast
 📫 LinkedIn • GitHub
+
+---
+
+## 🚀 How to Run Locally
+
+```bash
+# Step 1: Clone the project
+git clone https://github.com/yourusername/tradesim.git
+cd tradesim
+
+# Step 2: Run all services
+docker-compose up --build
+
+# Step 3: Run the Front End with the help of React and Vite
+cd tradesimFronrEnd
+npm run dev
+
+
+
