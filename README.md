@@ -90,7 +90,7 @@ This project is open source under the MIT License.
 
 ✨ Created By
 Shiv Vrat Raghuvanshi
-🎓 BCA Final Year | Java, Spring Boot & React Enthusiast
+🎓 BCA Final Year | Java, Spring Boot & Android Enthusiast
 📫 LinkedIn • GitHub
 
 ---
