@@ -47,8 +47,7 @@
 
 ## 🖼️ Screenshots & Demo
 
-> 📽️ [Demo Video Placeholder](#)  
-> ![Screenshot Placeholder](./screenshots/dashboard.png)
+> ![Screenshot Placeholder](https://drive.google.com/drive/folders/1TiRF66rLAcRtF7g-Q4PAJS4K-YlIP0j7?usp=drive_link)
 
 ---
 
