@@ -1,4 +1,4 @@
-// src/main.jsx or src/main.tsx ke top me add karo
+// sockjs-client expects a Node-style `global`
 window.global = window;
 
 import { StrictMode } from 'react'

@@ -1,8 +1,6 @@
 package com.tradesim.portfolio.controller;
 
-import com.tradesim.portfolio.dto.BuyCryptoReqDto;
 import com.tradesim.portfolio.dto.PortfolioResponse;
-import com.tradesim.portfolio.dto.TradeCryptoRes;
 import com.tradesim.portfolio.service.PortfolioService;
 import com.tradesim.portfolio.utils.JwtUtils;
 import lombok.RequiredArgsConstructor;
@@ -22,7 +20,23 @@ public class PortfolioController {
     private final PortfolioService portfolioService;
     private final JwtUtils jwtUtils;
 
+    // Portfolio of the logged-in user, identified by their access token
+    @GetMapping("/me")
+    public PortfolioResponse getMyPortfolio(@RequestHeader(value = "Authorization", required = false) String token) {
+        return getPortfolio(emailFromToken(token)).getBody();
+    }
 
+    @GetMapping("/getBalance")
+    public String fetchBalance(@RequestHeader(value = "Authorization", required = false) String token) {
+        String email = emailFromToken(token);
+        try {
+            return Double.toString(portfolioService.getBalance(email));
+        } catch (NoSuchElementException e) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Portfolio not found");
+        }
+    }
+
+    // Used internally by trade-service
     @GetMapping("/{email}")
     public ResponseEntity<PortfolioResponse> getPortfolio(@PathVariable String email) {
         try {
@@ -36,14 +50,14 @@ public class PortfolioController {
         }
     }
 
-    @GetMapping("/getBalance")
-    public String fetchBalance(@RequestHeader("Authorization") String token){
-        String jwtToken = token.substring(7);
-        if (jwtUtils.isValidToken(jwtToken)){
-        String email = jwtUtils.extractEmail(jwtToken);
-            double balance = portfolioService.getBalance(email);
-            return Double.toString(balance);
+    private String emailFromToken(String authHeader) {
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing token");
         }
-        throw new RuntimeException("Something went wrong!");
+        String jwtToken = authHeader.substring(7);
+        if (!jwtUtils.isValidToken(jwtToken)) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid or expired token");
+        }
+        return jwtUtils.extractEmail(jwtToken);
     }
 }

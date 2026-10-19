@@ -12,7 +12,9 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient;
+import io.netty.resolver.DefaultAddressResolverGroup;
 import reactor.core.publisher.Mono;
+import reactor.netty.http.client.HttpClient;
 
 import java.net.URI;
 import java.time.Duration;
@@ -25,15 +27,17 @@ public class BinanceWebSocketService {
 
     private static final Logger logger = LoggerFactory.getLogger(BinanceWebSocketService.class);
     private final MarketServiceImpl marketService;
-    private static final List<String> CRYPTOS = List.of(
+    // MATIC and FTM were delisted after rebranding to POL and S (Sonic)
+    public static final List<String> CRYPTOS = List.of(
             "btcusdt", "ethusdt", "bnbusdt", "xrpusdt", "solusdt",
-            "adausdt", "dogeusdt", "maticusdt", "ltcusdt", "dotusdt",
+            "adausdt", "dogeusdt", "polusdt", "ltcusdt", "dotusdt",
             "linkusdt", "shibusdt", "trxusdt", "avaxusdt", "atomusdt",
-            "xlmusdt", "nearusdt", "apeusdt", "ftmusdt", "sandusdt"
+            "xlmusdt", "nearusdt", "apeusdt", "susdt", "sandusdt"
     );
     private final RedisTemplate<String, Object> redisTemplate;
     private final SimpMessagingTemplate messagingTemplate;
     private final AtomicBoolean isConnected = new AtomicBoolean(false);
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @PostConstruct
     public void connect() {
@@ -45,7 +49,9 @@ public class BinanceWebSocketService {
         String url = "wss://stream.binance.com:443/stream?streams=" + streams;
         logger.info("Connecting to Binance WebSocket: {}", url);
 
-        ReactorNettyWebSocketClient client = new ReactorNettyWebSocketClient();
+        // Use the OS resolver; Netty's built-in DNS client fails on networks that block direct UDP DNS
+        HttpClient httpClient = HttpClient.create().resolver(DefaultAddressResolverGroup.INSTANCE);
+        ReactorNettyWebSocketClient client = new ReactorNettyWebSocketClient(httpClient);
         client.setMaxFramePayloadLength(65536); // Increase payload size for large messages
 
         client.execute(
@@ -53,12 +59,8 @@ public class BinanceWebSocketService {
                 session -> {
                     isConnected.set(true);
                     logger.info("Binance WebSocket connection established for streams: {}", streams);
-                    // Send periodic pings to keep connection alive
-                    Mono<Void> ping = session.send(
-                            Mono.just(session.textMessage("ping"))
-                    ).then(Mono.delay(Duration.ofSeconds(30)).then()).repeat().then();
-                    // Receive messages
-                    Mono<Void> receive = session.receive()
+                    // Binance sends ping frames and Netty answers them, so we only need to receive
+                    return session.receive()
                             .map(WebSocketMessage::getPayloadAsText)
                             .doOnNext(this::handleMessage)
                             .doOnError(e -> logger.error("WebSocket receive error: {}", e.getMessage()))
@@ -67,7 +69,6 @@ public class BinanceWebSocketService {
                                 logger.warn("Binance WebSocket connection closed");
                             })
                             .then();
-                    return Mono.when(ping, receive);
                 }
         ).subscribe(
                 null,
@@ -93,8 +94,8 @@ public class BinanceWebSocketService {
     private void handleMessage(String message) {
         try {
             logger.debug("Received Binance message: {}", message);
-            BinanceTradeWrapper trade = new ObjectMapper().readValue(message, BinanceTradeWrapper.class);
-            String symbol = trade.getData().getS().toUpperCase(); // Normalize to uppercase
+            BinanceTradeWrapper trade = objectMapper.readValue(message, BinanceTradeWrapper.class);
+            String symbol = trade.getData().getSymbol().toUpperCase(); // Normalize to uppercase
             logger.info("Publishing trade for symbol: {}", symbol);
             redisTemplate.opsForValue().set(symbol, trade.getData());
             messagingTemplate.convertAndSend("/topic/crypto/" + symbol.toLowerCase(), trade.getData());

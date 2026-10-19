@@ -30,9 +30,8 @@ public class TradeController {
             return new ResponseEntity<>(HttpStatus.UNAUTHORIZED);
         }
         String email = jwtUtils.extractEmail(jwtToken);
-        System.out.println("email is:" + email + "\nAnd token is :" + token + "\nAfter cutout:" + jwtToken);
 
-        return tradeService.buyCrypto(email,req.getSymbol(),req.getPrice(),req.getQuantity());
+        return tradeService.buyCrypto(email, req.getSymbol(), req.getQuantity());
     }
 
     @PostMapping("/sell")
@@ -46,8 +45,7 @@ public class TradeController {
         }
 
         String email = jwtUtils.extractEmail(jwtToken);
-        System.out.println("email is:" + email + "\nAnd token is :" + token + "\nAfter cutout:" + jwtToken);
 
-        return tradeService.sellCrypto(email,req.getSymbol(),req.getPrice(),req.getQuantity());
+        return tradeService.sellCrypto(email, req.getSymbol(), req.getQuantity());
     }
 }

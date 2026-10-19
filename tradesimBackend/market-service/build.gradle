@@ -29,9 +29,8 @@ dependencies {
     implementation 'org.slf4j:slf4j-api:2.0.9'
     implementation 'ch.qos.logback:logback-classic:1.4.11'
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.15.2'
-    implementation 'org.springframework:spring-webflux:6.1.6'
-    // Add explicit Reactor dependency to resolve potential issues
-    implementation 'io.projectreactor:reactor-core:3.6.5'
+    // WebFlux starter brings reactor-netty, needed by the Binance WebSocket client
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
 }
 
 tasks.named('test') {

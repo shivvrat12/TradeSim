@@ -1,428 +1,328 @@
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
-import { useEffect, useState, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  ResponsiveContainer,
-  Area,
-} from 'recharts';
-import { ArrowUpRight, ArrowDownRight } from 'lucide-react';
-import { fetchBalance } from '../services/api';
-import api from '../services/api';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { ArrowLeft } from 'lucide-react';
+import TopBar from './TopBar';
+import TickingPrice from './TickingPrice';
+import { TradeSide } from './Home';
+import { usePortfolio } from '../lib/hooks';
+import { errorMessage, fetchPrices, MARKET_WS_URL, placeTrade } from '../services/api';
+import { baseAsset, formatPrice, formatQty, formatUsd, isEmptyTrade } from '../lib/format';
 
-const CryptoDetail = () => {
-  const navigate = useNavigate();
-  const { symbol } = useParams();
-  const [data, setData] = useState(null);
+const MAX_POINTS = 120;
+// Busy coins trade many times per second; the UI samples the stream at this rate
+const SAMPLE_MS = 500;
+
+function useLiveTrades(symbol) {
+  const [trade, setTrade] = useState(null);
   const [history, setHistory] = useState([]);
-  const [error, setError] = useState(null);
-  const [quantity, setQuantity] = useState(1.0);
-  const stompRef = useRef(null);
-  const [loading, setLoading] = useState(false);
-  const [userBalance, setUserBalance] = useState('');
-  const [showAlert, setShowAlert] = useState(true);
-  const [textInAlert, setTextInAlert] = useState("");
-  const setShowALertWithTiming = () => {
-    setShowAlert(true);
-    setTimeout(()=>{
-      setShowAlert(false);
-    },4000);
-  };
-
-  const handleLoginClick = () => {
-    if (userBalance === 'Log In') {
-      navigate('/login');
-    }
-  };
+  const [connected, setConnected] = useState(false);
+  const latest = useRef(null);
 
   useEffect(() => {
-    if (!symbol) return;
+    latest.current = null;
+    setTrade(null);
+    setHistory([]);
 
-    const token = localStorage.getItem('jwtToken');
+    // Show the last known price right away instead of waiting for the next trade
+    fetchPrices()
+      .then((data) => {
+        const seed = data[symbol];
+        if (!isEmptyTrade(seed) && !latest.current) latest.current = seed;
+      })
+      .catch(() => {});
 
-    // Initialize WebSocket
-    const socket = new SockJS(`http://localhost:8080/ws${token ? `?token=${token}` : ''}`);
-    const stomp = new Client({
-      webSocketFactory: () => socket,
-      debug: (str) => console.log(str),
-      onConnect: () => {
-        console.log('WebSocket connected');
-        const topic = `/topic/crypto/${symbol.toLowerCase()}`;
-        console.log(`Subscribing to ${topic}`);
-        stomp.subscribe(topic, (message) => {
-          try {
-            const trade = JSON.parse(message.body);
-            console.log(`Received trade on ${topic}:`, trade);
-            const point = {
-              time: new Date(trade.T).toLocaleTimeString(),
-              price: parseFloat(trade.p),
-            };
-            setData(trade);
-            setHistory((h) => {
-              const next = [...h, point];
-              return next.length > 30 ? next.slice(next.length - 30) : next;
-            });
-            setError(null);
-          } catch (e) {
-            console.error(`Error parsing message on ${topic}:`, e, message.body);
-            setError('Invalid data received from server');
-          }
-        });
-      },
-      onStompError: (frame) => {
-        console.error('STOMP error:', frame);
-        setError('Failed to connect to price updates. Please try refreshing the page.');
-        if (frame.headers?.message?.includes('Unauthorized')) {
-          const refreshToken = localStorage.getItem('refreshToken');
-          if (refreshToken) {
-            api
-              .post('/api/auth/v1/refresh', { refreshToken })
-              .then((response) => {
-                const newAccessToken = response.data.accessToken;
-                localStorage.setItem('jwtToken', newAccessToken);
-                stomp.deactivate();
-                const newSocket = new SockJS(`http://localhost:8080/ws?token=${newAccessToken}`);
-                stomp.webSocketFactory = () => newSocket;
-                stomp.activate();
-              })
-              .catch(() => {
-                localStorage.removeItem('jwtToken');
-                localStorage.removeItem('refreshToken');
-                navigate('/login');
-              });
-          } else {
-            localStorage.removeItem('jwtToken');
-            localStorage.removeItem('refreshToken');
-            navigate('/login');
-          }
-        }
-      },
-      onWebSocketError: (error) => {
-        console.error('WebSocket error:', error);
-        setError('Failed to connect to price updates. Please try refreshing the page.');
-      },
+    const client = new Client({
+      // A fresh SockJS per attempt; reusing a closed socket breaks reconnects
+      webSocketFactory: () => new SockJS(MARKET_WS_URL),
       reconnectDelay: 5000,
-    });
-
-    // Set a timeout to show an error if no data is received
-    const timeout = setTimeout(() => {
-      if (!data && !error) {
-        setError('No recent trade data received. The market may be inactive or the connection is down.');
-      }
-    }, 30000); // 30 seconds
-
-    // Fetch balance if authenticated
-    if (token) {
-      fetchBalance()
-        .then((balance) => {
-          setUserBalance(parseFloat(balance).toFixed(2));
-        })
-        .catch((error) => {
-          console.error('Error fetching balance:', error);
-          setUserBalance('Log In');
+      onConnect: () => {
+        setConnected(true);
+        client.subscribe(`/topic/crypto/${symbol.toLowerCase()}`, (message) => {
+          try {
+            latest.current = JSON.parse(message.body);
+          } catch {
+            // ignore malformed frames
+          }
         });
-    } else {
-      setUserBalance('Log In');
-    }
+      },
+      onWebSocketClose: () => setConnected(false),
+    });
+    client.activate();
 
-    stompRef.current = stomp;
-    stomp.activate();
+    let lastSampled = null;
+    const sampler = setInterval(() => {
+      const t = latest.current;
+      if (!t || t === lastSampled) return;
+      lastSampled = t;
+      setTrade(t);
+      setHistory((h) => [...h, { time: t.T || Date.now(), price: Number(t.p) }].slice(-MAX_POINTS));
+    }, SAMPLE_MS);
 
     return () => {
-      clearTimeout(timeout);
-      if (stompRef.current) {
-        stompRef.current.deactivate();
-        console.log('WebSocket disconnected');
-      }
+      clearInterval(sampler);
+      client.deactivate();
     };
-  }, [symbol, navigate]);
+  }, [symbol]);
 
-  const handleBuy = async () => {
-    setLoading(true);
-    const token = localStorage.getItem('jwtToken');
-    if (!data) {
-      alert('No price data available');
-      setLoading(false);
-      return;
-    }
-    if (!token) {
-      alert('Please login to buy any token');
-      setLoading(false);
-      navigate('/login');
-      return;
-    }
-    if (quantity <= 0) {
-      setLoading(false);
-      alert('Quantity must be positive');
-      return;
-    }
-    try {
-      const response = await api.post('http://localhost:8083/api/trade/buy', {
-        symbol: symbol.toUpperCase(),
-        price: parseFloat(data.p),
-        quantity: quantity,
-      });
-      if (token) {
-        fetchBalance()
-          .then((balance) => {
-            setUserBalance(parseFloat(balance).toFixed(2));
-          })
-          .catch((error) => {
-            console.error('Error fetching balance:', error);
-            setUserBalance('Error');
-          });
-      } else {
-        setUserBalance('Log In');
-      }
-      setLoading(false);
-      setShowALertWithTiming();
-      setTextInAlert(`🔥 ${symbol}: ${response.data.message}`);
-      setQuantity(1.0);
-    } catch (error) {
-      console.error('Buy error:', error);
-      setLoading(false);
-      const errorMessage =
-        error.response?.data?.message || error.message || 'Unknown error occurred';
-        setShowALertWithTiming();
-        setTextInAlert(`❌ ${errorMessage}`);
-      if (error.response?.status === 401) {
-        alert('Session expired. Please log in again.');
-        navigate('/login');
-      }
-    }
-  };
+  return { trade, history, connected };
+}
 
-  const handleSell = async () => {
-    setLoading(true);
-    const token = localStorage.getItem('jwtToken');
-    if (!data) {
-      alert('No price data available');
-      setLoading(false);
-      return;
-    }
-    if (!token) {
-      setLoading(false);
-      alert('Please login before selling any stock.');
-      navigate('/login');
-      return;
-    }
-    if (quantity <= 0) {
-      setLoading(false);
-      alert('Quantity must be positive');
-      return;
-    }
-    try {
-      const response = await api.post('http://localhost:8083/api/trade/sell', {
-        symbol: symbol.toUpperCase(),
-        price: parseFloat(data.p),
-        quantity: quantity,
-      });
-      if (token) {
-        fetchBalance()
-          .then((balance) => {
-            setUserBalance(parseFloat(balance).toFixed(2));
-          })
-          .catch((error) => {
-            console.error('Error fetching balance:', error);
-            setUserBalance('Error');
-          });
-      } else {
-        setUserBalance('Log In');
-      }
-      setLoading(false);
-      setShowALertWithTiming();
-      setTextInAlert(`🔥${symbol}: ${response.data.message}`);
-      setQuantity(1.0);
-    } catch (error) {
-      console.error('Sell error:', error);
-      setLoading(false);
-      const errorMessage =
-        error.response?.data?.message || error.message || 'Unknown error occurred';
-        setShowALertWithTiming();
-        setTextInAlert(`❌ ${errorMessage}`);
-      if (error.response?.status === 401) {
-        alert('Session expired. Please log in again.');
-        navigate('/login');
-      }
-    }
-  };
-
-  const CustomTooltip = ({ active, payload, label }) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="backdrop-blur-sm bg-zinc-700/40 border border-zinc-600 rounded-lg p-3 text-sm text-gray-300">
-          <p className="font-semibold text-white">{`Time: ${label}`}</p>
-          <p>{`Price: $${payload[0].value.toFixed(4)}`}</p>
-        </div>
-      );
-    }
-    return null;
-  };
+function Details() {
+  const symbol = useParams().symbol.toUpperCase();
+  const asset = baseAsset(symbol);
+  const { portfolio, setPortfolio, status, reload } = usePortfolio();
+  const { trade, history, connected } = useLiveTrades(symbol);
 
   return (
-    <div className="min-h-screen w-full bg-gradient-to-br from-red-900 to-zinc-800 text-white p-6">
-       <div className='flex items-center justify-center'>
-       {showAlert && (
-          <div className='text-lg font-semibold text-white mb-2'>
-            {textInAlert}
-          </div>
-        )}
-        </div>
-      <div className="flex content-center justify-center">
-        <h1 className="text-3xl font-bold mb-10 text-center md:text-xl">🚀 {symbol} Live Price</h1>
-        <div
-          className="m-2 absolute top-6 right-6 p-2 backdrop-blur-sm bg-zinc-700/40 border border-zinc-600 rounded-2xl shadow-lg cursor-pointer"
-          onClick={handleLoginClick}
-        >
-          ${userBalance}
-        </div>
-      </div>
+    <>
+      <TopBar portfolio={portfolio} status={status} />
+      <main className="mx-auto max-w-6xl px-4 py-6">
+        <Link to="/" className="inline-flex items-center gap-1 text-sm font-medium text-muted hover:text-ink">
+          <ArrowLeft size={16} aria-hidden="true" /> All markets
+        </Link>
 
-      <div className="grid gap-6 grid-cols-1 lg:grid-cols-3">
-        {/* Graph Card */}
-        <div className="lg:col-span-2 backdrop-blur-sm bg-zinc-700/40 border border-zinc-600 rounded-2xl p-5 shadow-lg">
-          <h2 className="text-xl font-bold mb-4">Price Chart</h2>
-          <div className="w-full h-[400px]">
-            {history.length > 0 ? (
-              <ResponsiveContainer>
-                <LineChart data={history}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#444" />
-                  <XAxis
-                    dataKey="time"
-                    minTickGap={20}
-                    tick={{ fill: '#ccc', fontSize: 12 }}
-                    stroke="#ccc"
-                  />
-                  <YAxis
-                    domain={['auto', 'auto']}
-                    tick={{ fill: '#ccc', fontSize: 12 }}
-                    stroke="#ccc"
-                  />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Line
-                    type="monotone"
-                    dataKey="price"
-                    stroke="#8884d8"
-                    strokeWidth={2}
-                    dot={false}
-                    animationDuration={300}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="price"
-                    stroke="none"
-                    fill="url(#priceGradient)"
-                    fillOpacity={0.3}
-                  />
-                  <defs>
-                    <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#8884d8" stopOpacity={0.8} />
-                      <stop offset="95%" stopColor="#8884d8" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                </LineChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="text-gray-400">Waiting for price data...</p>
-            )}
+        <div className="mt-3 mb-5 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">
+              {asset}
+              <span className="font-normal text-muted">/USDT</span>
+            </h1>
+            <p className="mt-1 text-4xl font-bold tracking-tight">
+              {trade ? <TickingPrice value={trade.p} tabular={false} className="-mx-1" /> : <span className="text-muted">—</span>}
+            </p>
           </div>
+          <p className="text-sm text-muted">
+            <span
+              className={`mr-1.5 inline-block size-2 rounded-full ${connected ? 'bg-gain' : 'bg-rule'}`}
+              aria-hidden="true"
+            />
+            {connected ? 'Live from Binance' : 'Connecting to live prices…'}
+          </p>
         </div>
 
-        {/* Trade Data Card */}
-        <div className="backdrop-blur-sm bg-zinc-700/40 border border-zinc-600 rounded-2xl p-5 shadow-lg">
-          <h2 className="text-xl font-bold mb-4">Trade Details</h2>
-          {error ? (
-            <p className="text-red-400">{error}</p>
-          ) : data ? (
-            <div className="text-sm text-gray-300">
-              <div className="flex items-center justify-between mb-2">
-                <p className="mb-1">
-                  Price:{' '}
-                  <span className="text-white font-semibold">${parseFloat(data.p).toFixed(4)}</span>
+        <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
+          <section className="rounded-lg border border-rule bg-surface p-5">
+            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="font-semibold">Price</h2>
+              {trade && (
+                <p className="text-sm text-muted">
+                  Last trade <TradeSide sellerInitiated={trade.m} />{' '}
+                  <span>{formatQty(trade.q)} {asset}</span>
                 </p>
-                <span
-                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-sm font-medium ${
-                    data.m
-                      ? 'bg-red-500/20 text-red-400'
-                      : 'bg-green-500/20 text-green-400'
-                  }`}
-                >
-                  {data.m ? (
-                    <>
-                      <ArrowDownRight size={16} />
-                      Sell
-                    </>
-                  ) : (
-                    <>
-                      <ArrowUpRight size={16} />
-                      Buy
-                    </>
-                  )}
-                </span>
-              </div>
-              <p className="mb-1">
-                Quantity:{' '}
-                <span className="text-white font-semibold">{parseFloat(data.q).toFixed(4)}</span>
-              </p>
-              <p className="mb-4">
-                Trade Time:{' '}
-                <span className="text-white font-semibold">
-                  {new Date(data.T).toLocaleTimeString()}
-                </span>
-              </p>
-              <div className="space-y-4">
-                <input
-                  type="number"
-                  value={quantity}
-                  onChange={(e) => setQuantity(parseFloat(e.target.value) || 0)}
-                  min="0.1"
-                  step="0.1"
-                  className="w-full p-2 bg-zinc-800 border border-zinc-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-sky-700"
-                  placeholder="Enter quantity"
-                />
-                <div className="flex gap-4 text-white">
-                  Amount needed to make this purchase: {(quantity * data.p).toFixed(2)}
-                </div>
-                <div className="flex gap-4">
-                  <button
-                    onClick={handleBuy}
-                    disabled={!data || loading}
-                    className={`flex-1 py-2 rounded-lg font-medium transition-colors ${
-                      data && !loading
-                        ? 'bg-green-500/20 text-green-400 hover:bg-green-500/40'
-                        : 'bg-zinc-600 text-gray-400 cursor-not-allowed'
-                    }`}
-                  >
-                    {loading ? 'Buying...' : 'Buy'}
-                  </button>
-                  <button
-                    onClick={handleSell}
-                    disabled={!data || loading}
-                    className={`flex-1 py-2 rounded-lg font-medium transition-colors ${
-                      data && !loading
-                        ? 'bg-red-500/20 text-red-400 hover:bg-red-500/40'
-                        : 'bg-zinc-600 text-gray-400 cursor-not-allowed'
-                    }`}
-                  >
-                    {loading ? 'Selling...' : 'Sell'}
-                  </button>
-                </div>
-              </div>
+              )}
             </div>
-          ) : (
-            <p className="text-gray-400">Waiting for price data...</p>
-          )}
+            <PriceChart history={history} />
+          </section>
+
+          <OrderTicket
+            symbol={symbol}
+            asset={asset}
+            price={trade ? Number(trade.p) : null}
+            portfolio={portfolio}
+            status={status}
+            onFilled={(res) => {
+              setPortfolio((p) => p && { ...p, balance: res.balance, holdings: res.updatedHoldings });
+              // The portfolio is updated asynchronously over Kafka; re-read it shortly after
+              setTimeout(reload, 1500);
+            }}
+          />
         </div>
-        
+      </main>
+    </>
+  );
+}
+
+function PriceChart({ history }) {
+  if (history.length < 2) {
+    return (
+      <div className="flex h-[360px] items-center justify-center text-sm text-muted">
+        Waiting for trades to draw the chart…
       </div>
+    );
+  }
+  return (
+    <div className="h-[360px]">
+      <ResponsiveContainer>
+        <AreaChart data={history} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
+          <defs>
+            <linearGradient id="priceFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#2747d9" stopOpacity={0.18} />
+              <stop offset="100%" stopColor="#2747d9" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid stroke="#dfe6ef" vertical={false} />
+          <XAxis
+            dataKey="time"
+            tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            minTickGap={40}
+            tick={{ fill: '#5b6b85', fontSize: 12 }}
+            stroke="#cad4e1"
+          />
+          <YAxis
+            domain={['auto', 'auto']}
+            tickFormatter={formatPrice}
+            width={88}
+            tick={{ fill: '#5b6b85', fontSize: 12 }}
+            stroke="#cad4e1"
+          />
+          <Tooltip
+            formatter={(value) => [formatPrice(value), 'Price']}
+            labelFormatter={(t) => new Date(t).toLocaleTimeString()}
+            contentStyle={{ border: '1px solid #cad4e1', borderRadius: 6, fontSize: 13 }}
+          />
+          <Area
+            type="monotone"
+            dataKey="price"
+            stroke="#2747d9"
+            strokeWidth={2}
+            fill="url(#priceFill)"
+            isAnimationActive={false}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
     </div>
   );
-};
+}
 
-export default CryptoDetail;
+function OrderTicket({ symbol, asset, price, portfolio, status, onFilled }) {
+  const [side, setSide] = useState('buy');
+  const [quantity, setQuantity] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState(null);
+
+  if (status === 'signed-out') {
+    return (
+      <aside className="rounded-lg border border-rule bg-surface p-5">
+        <h2 className="font-semibold">Trade {asset}</h2>
+        <p className="mt-1 text-sm text-muted">Log in to buy and sell with your virtual cash.</p>
+        <Link
+          to="/login"
+          className="mt-4 block rounded-md bg-cobalt py-2.5 text-center font-semibold text-white hover:bg-cobalt-dark"
+        >
+          Log in
+        </Link>
+      </aside>
+    );
+  }
+
+  const qty = Number(quantity);
+  const validQty = quantity !== '' && Number.isFinite(qty) && qty > 0;
+  const held = portfolio?.holdings?.[symbol] ?? 0;
+  const cash = portfolio?.balance ?? 0;
+  const estimate = validQty && price ? qty * price : null;
+
+  const problem = !validQty
+    ? null
+    : side === 'buy' && estimate > cash
+      ? `That costs ${formatUsd(estimate)}, but you have ${formatUsd(cash)} in cash.`
+      : side === 'sell' && qty > held
+        ? `You hold ${formatQty(held)} ${asset}.`
+        : null;
+
+  const setMax = () => {
+    if (side === 'sell') setQuantity(String(held));
+    else if (price) setQuantity(String(Math.floor((cash / price) * 1e6) / 1e6));
+  };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setResult(null);
+    try {
+      const res = await placeTrade(side, symbol, qty);
+      setResult({ ok: true, text: res.message });
+      setQuantity('');
+      onFilled(res);
+    } catch (err) {
+      setResult({ ok: false, text: errorMessage(err, 'The trade did not go through. Try again.') });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const sideLabel = side === 'buy' ? 'Buy' : 'Sell';
+
+  return (
+    <aside className="rounded-lg border border-rule bg-surface p-5">
+      <h2 className="font-semibold">Trade {asset}</h2>
+
+      <div className="mt-4 grid grid-cols-2 rounded-md border border-rule p-1 text-sm font-semibold" role="group" aria-label="Order side">
+        {['buy', 'sell'].map((s) => (
+          <button
+            key={s}
+            type="button"
+            aria-pressed={side === s}
+            onClick={() => {
+              setSide(s);
+              setResult(null);
+            }}
+            className={`rounded py-1.5 ${
+              side === s ? (s === 'buy' ? 'bg-gain text-white' : 'bg-loss text-white') : 'text-muted hover:text-ink'
+            }`}
+          >
+            {s === 'buy' ? 'Buy' : 'Sell'}
+          </button>
+        ))}
+      </div>
+
+      <form onSubmit={submit} className="mt-4 space-y-4">
+        <label className="block text-sm font-medium">
+          Quantity
+          <div className="mt-1 flex rounded-md border border-rule focus-within:border-cobalt">
+            <input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="any"
+              placeholder="0.00"
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              className="num w-full rounded-l-md px-3 py-2 font-normal focus:outline-none"
+            />
+            <span className="flex items-center pr-2 text-muted">{asset}</span>
+            <button type="button" onClick={setMax} className="border-l border-rule px-3 text-cobalt hover:bg-paper">
+              Max
+            </button>
+          </div>
+        </label>
+
+        <dl className="space-y-1.5 text-sm">
+          <Row label={side === 'buy' ? 'Estimated cost' : 'Estimated proceeds'} value={estimate ? formatUsd(estimate) : '—'} strong />
+          <Row label="Cash available" value={formatUsd(cash)} />
+          <Row label={`${asset} you hold`} value={formatQty(held)} />
+        </dl>
+
+        {problem && <p className="text-sm text-loss">{problem}</p>}
+
+        <button
+          type="submit"
+          disabled={!validQty || !!problem || !price || submitting}
+          className={`w-full rounded-md py-2.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 ${
+            side === 'buy' ? 'bg-gain' : 'bg-loss'
+          }`}
+        >
+          {submitting ? `${sideLabel === 'Buy' ? 'Buying' : 'Selling'}…` : `${sideLabel} ${asset}`}
+        </button>
+        <p className="text-xs text-muted">Orders fill at the latest market price when you submit.</p>
+
+        <p aria-live="polite" className={`text-sm ${result?.ok ? 'text-gain' : 'text-loss'}`}>
+          {result?.text}
+        </p>
+      </form>
+    </aside>
+  );
+}
+
+function Row({ label, value, strong }) {
+  return (
+    <div className="flex justify-between">
+      <dt className="text-muted">{label}</dt>
+      <dd className={`num ${strong ? 'font-semibold' : ''}`}>{value}</dd>
+    </div>
+  );
+}
+
+export default Details;

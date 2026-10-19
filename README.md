@@ -110,4 +110,22 @@ cd tradesimFronrEnd
 npm run dev
 
 
+### Run locally without Docker (macOS + Homebrew)
+
+Uses Homebrew Postgres, Redis and Kafka (KRaft mode, no Zookeeper) instead of containers.
+
+```bash
+# One-time setup
+brew install postgresql@14 redis kafka
+brew services start postgresql@14 && brew services start redis && brew services start kafka
+psql -d postgres -c "CREATE ROLE shiv LOGIN PASSWORD '123';" -c "CREATE DATABASE tradesimdb OWNER shiv;"
+
+# Backend: builds the jars and starts all four services with the `local` Spring profile
+cd tradesimBackend
+./run-local.sh start      # also: stop | status | logs <service>
+
+# Frontend
+cd ../tradesimFronrEnd/tradeSim
+npm install && npm run dev   # http://localhost:5173
+```
 

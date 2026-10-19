@@ -1,13 +1,15 @@
 package com.tradesim.tradeservice.service;
 
 import com.tradesim.tradeservice.dto.TradeRes;
-import com.tradesim.tradeservice.dto.PortfolioUpdateReq;
+import com.tradesim.tradeservice.dto.TradeExecutedEvent;
 import com.tradesim.tradeservice.kafka.KafkaProducerService;
 import com.tradesim.tradeservice.models.PortfolioRes;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.util.Map;
 import java.util.Optional;
@@ -17,21 +19,37 @@ import java.util.logging.Logger;
 public class TradeService {
 
     private static final Logger logger = Logger.getLogger(TradeService.class.getName());
+    // Tolerance for floating-point dust when selling an entire holding
+    private static final double EPSILON = 1e-9;
 
     @Autowired
     private KafkaProducerService kafkaProducerService;
 
-    private final WebClient webClient = WebClient.builder()
-            .baseUrl("http://portfolio-service:8082")
-            .build();
+    @Autowired
+    private PriceService priceService;
+
+    private final WebClient webClient;
+
+    public TradeService(@Value("${portfolio.base-url}") String portfolioBaseUrl) {
+        this.webClient = WebClient.builder()
+                .baseUrl(portfolioBaseUrl)
+                .build();
+    }
 
     public PortfolioRes fetchUserPortfolio(String email) {
         logger.info("Fetching portfolio for email: " + email);
-        PortfolioRes portfolio = webClient.get()
-                .uri("/api/portfolio/{email}", email)
-                .retrieve()
-                .bodyToMono(PortfolioRes.class)
-                .block();
+        PortfolioRes portfolio;
+        try {
+            portfolio = webClient.get()
+                    .uri("/api/portfolio/{email}", email)
+                    .retrieve()
+                    .bodyToMono(PortfolioRes.class)
+                    .block();
+        } catch (WebClientResponseException.NotFound e) {
+            throw new RuntimeException("No portfolio found for your account");
+        } catch (Exception e) {
+            throw new RuntimeException("Portfolio service is unavailable");
+        }
         if (portfolio != null) {
             logger.info("Portfolio response - Email: " + portfolio.getEmail() +
                     ", Balance: " + portfolio.getBalance() +
@@ -42,55 +60,46 @@ public class TradeService {
         return portfolio;
     }
 
-    public ResponseEntity<TradeRes> sellCrypto(String email, String symbol, double price, double quantity) {
+    public ResponseEntity<TradeRes> sellCrypto(String email, String symbol, double quantity) {
         try {
-            logger.info("Processing sell request: email=" + email + ", symbol=" + symbol +
-                    ", price=" + price + ", quantity=" + quantity);
-            Optional<PortfolioRes> responseOptional = Optional.ofNullable(fetchUserPortfolio(email));
-            PortfolioRes portfolioResponse = responseOptional.orElseThrow(() ->
-                    new RuntimeException("Unable to fetch portfolio"));
+            logger.info("Processing sell request: email=" + email + ", symbol=" + symbol + ", quantity=" + quantity);
+            validateQuantity(quantity);
+            double price = priceService.getLatestPrice(symbol);
+            PortfolioRes portfolio = Optional.ofNullable(fetchUserPortfolio(email))
+                    .orElseThrow(() -> new RuntimeException("Unable to fetch portfolio"));
 
-            double availableBalance = portfolioResponse.getBalance();
-            Map<String, Double> availableHolding = portfolioResponse.getHoldings();
+            Map<String, Double> holdings = portfolio.getHoldings();
+            double availableQuantity = holdings.getOrDefault(symbol, 0.0);
+            if (availableQuantity <= 0) {
+                throw new RuntimeException("You don't hold any " + symbol);
+            }
+            if (availableQuantity + EPSILON < quantity) {
+                throw new RuntimeException("You only hold " + availableQuantity + " " + symbol);
+            }
+
             double totalSale = price * quantity;
-
-            logger.info("Sell - Available balance: " + availableBalance + ", Total sale value: " + totalSale);
-
-            if (availableBalance == 0.0 && availableHolding.isEmpty()) {
-                logger.warning("Portfolio is empty for email: " + email);
-            }
-
-            if (!availableHolding.containsKey(symbol)) {
-                throw new RuntimeException("Don't have any crypto in portfolio with name: " + symbol);
-            }
-            double availableQuantity = availableHolding.get(symbol);
-            if (availableQuantity < quantity) {
-                throw new RuntimeException("You don't have enough quantity of " + symbol);
-            }
-
-            portfolioResponse.setBalance(availableBalance + totalSale);
-            if (availableQuantity == quantity) {
-                availableHolding.remove(symbol);
+            double newBalance = portfolio.getBalance() + totalSale;
+            double remaining = availableQuantity - quantity;
+            if (remaining <= EPSILON) {
+                holdings.remove(symbol);
             } else {
-                availableHolding.put(symbol, availableQuantity - quantity);
+                holdings.put(symbol, remaining);
             }
 
-            PortfolioUpdateReq updateReq = PortfolioUpdateReq.builder()
+            kafkaProducerService.sendTradeExecuted(TradeExecutedEvent.builder()
                     .email(email)
-                    .updatedBalance(portfolioResponse.getBalance())
-                    .updatedHoldings(availableHolding)
-                    .build();
+                    .symbol(symbol)
+                    .side(TradeExecutedEvent.Side.SELL)
+                    .quantity(quantity)
+                    .price(price)
+                    .build());
 
-            kafkaProducerService.sendPortfolioUpdate(updateReq);
-
-            logger.info("Sell successful: Updated balance: " + portfolioResponse.getBalance() +
-                    ", Updated holdings: " + availableHolding);
-
+            logger.info("Sell accepted: " + quantity + " " + symbol + " @ " + price);
             return ResponseEntity.ok(
                     TradeRes.builder()
-                            .message("Successfully sold " + quantity + " of " + symbol)
-                            .balance(portfolioResponse.getBalance())
-                            .updatedHoldings(availableHolding)
+                            .message("Sold " + quantity + " " + symbol + " at $" + price)
+                            .balance(newBalance)
+                            .updatedHoldings(holdings)
                             .build()
             );
         } catch (RuntimeException e) {
@@ -103,48 +112,38 @@ public class TradeService {
         }
     }
 
-    public ResponseEntity<TradeRes> buyCrypto(String email, String symbol, double price, double quantity) {
+    public ResponseEntity<TradeRes> buyCrypto(String email, String symbol, double quantity) {
         try {
-            logger.info("Processing buy request: email=" + email + ", symbol=" + symbol +
-                    ", price=" + price + ", quantity=" + quantity);
-            Optional<PortfolioRes> responseOptional = Optional.ofNullable(fetchUserPortfolio(email));
-            PortfolioRes response = responseOptional.orElseThrow(() ->
-                    new RuntimeException("Unable to fetch portfolio"));
+            logger.info("Processing buy request: email=" + email + ", symbol=" + symbol + ", quantity=" + quantity);
+            validateQuantity(quantity);
+            double price = priceService.getLatestPrice(symbol);
+            PortfolioRes portfolio = Optional.ofNullable(fetchUserPortfolio(email))
+                    .orElseThrow(() -> new RuntimeException("Unable to fetch portfolio"));
 
-            double availableBalance = response.getBalance();
-            Map<String, Double> availableHolding = response.getHoldings();
             double totalCost = price * quantity;
-
-            logger.info("Buy - Available balance: " + availableBalance + ", Total cost: " + totalCost);
-
-            if (availableBalance == 0.0 && availableHolding.isEmpty()) {
-                logger.warning("Portfolio is empty for email: " + email);
-            }
-
+            double availableBalance = portfolio.getBalance();
             if (availableBalance < totalCost) {
-                throw new RuntimeException("Insufficient balance to buy " + symbol +
-                        ". Required: " + totalCost + ", Available: " + availableBalance);
+                throw new RuntimeException(String.format(
+                        "Insufficient balance. Required: $%.2f, available: $%.2f", totalCost, availableBalance));
             }
 
-            response.setBalance(availableBalance - totalCost);
-            availableHolding.merge(symbol, quantity, Double::sum);
+            Map<String, Double> holdings = portfolio.getHoldings();
+            holdings.merge(symbol, quantity, Double::sum);
 
-            PortfolioUpdateReq updateReq = PortfolioUpdateReq.builder()
+            kafkaProducerService.sendTradeExecuted(TradeExecutedEvent.builder()
                     .email(email)
-                    .updatedBalance(response.getBalance())
-                    .updatedHoldings(availableHolding)
-                    .build();
+                    .symbol(symbol)
+                    .side(TradeExecutedEvent.Side.BUY)
+                    .quantity(quantity)
+                    .price(price)
+                    .build());
 
-            kafkaProducerService.sendPortfolioUpdate(updateReq);
-
-            logger.info("Buy successful: Updated balance: " + response.getBalance() +
-                    ", Updated holdings: " + availableHolding);
-
+            logger.info("Buy accepted: " + quantity + " " + symbol + " @ " + price);
             return ResponseEntity.ok(
                     TradeRes.builder()
-                            .message("Successfully bought " + quantity + " of " + symbol)
-                            .balance(response.getBalance())
-                            .updatedHoldings(availableHolding)
+                            .message("Bought " + quantity + " " + symbol + " at $" + price)
+                            .balance(availableBalance - totalCost)
+                            .updatedHoldings(holdings)
                             .build()
             );
         } catch (RuntimeException e) {
@@ -154,6 +153,12 @@ public class TradeService {
                             .message("Buy failed: " + e.getMessage())
                             .build()
             );
+        }
+    }
+
+    private static void validateQuantity(double quantity) {
+        if (!Double.isFinite(quantity) || quantity <= 0) {
+            throw new RuntimeException("Quantity must be greater than zero");
         }
     }
 }
